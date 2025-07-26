@@ -130,7 +130,7 @@ PaperWM.window_gap = {
 }
 
 -- ratios to use when cycling widths and heights, golden ratio by default
-PaperWM.window_ratios = { 0.23607, 0.38195, 0.61804 }
+PaperWM.window_ratios = { 0.33, 0.5, 0.66 }
 
 -- size of the on-screen margin to place off-screen windows
 PaperWM.screen_margin = 1
