@@ -67,4 +67,19 @@ local Config = {
 
 Config.__index = Config
 
+---get the gap value for the specified side
+---@param side string "top", "bottom", "left", or "right"
+---@return number gap size in pixels
+local function getGap(side)
+    local gap = PaperWM.window_gap
+    if type(gap) == "number" then
+        return gap            -- backward compatibility with single number
+    elseif type(gap) == "table" then
+        return gap[side] or 8 -- default to 8 if missing
+    else
+        return 8              -- fallback default
+    end
+end
+
+
 return Config

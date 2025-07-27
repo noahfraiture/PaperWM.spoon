@@ -70,7 +70,7 @@ local function mouseDrag(start_position, end_position)
 end
 
 ---find mission control AXGroup from Dock app
----return userdata|nil, string|nil error
+---return userdata?, string? error
 local function getMissionControlGroup()
     local dock_app = Application.applicationsForBundleID("com.apple.dock")[1]
     local dock_element = Axuielement.applicationElement(dock_app)
@@ -84,7 +84,7 @@ local function getMissionControlGroup()
 end
 
 ---collect all of the Mission Control display AXGroup elements
----return table|nil, string|nil error
+---return table?, string? error
 local function getDisplayGroups()
     local mc_group, err = getMissionControlGroup()
     if err or not mc_group then
@@ -102,7 +102,7 @@ local function getDisplayGroups()
 end
 
 ---collect all of the windows in Mission Control
----return table|nil, string|nil error
+---return table?, string? error
 local function getMissionControlWindows()
     local display_groups, err = getDisplayGroups()
     if err or not display_groups then
@@ -124,7 +124,7 @@ local function getMissionControlWindows()
 end
 
 ---collect all of the spaces in Mission Control
----return table|nil, string|nil error
+---return table?, string? error
 local function getMissionControlSpaces()
     local display_groups, err = getDisplayGroups()
     if err or not display_groups then
@@ -154,7 +154,7 @@ end
 ---calculate which index in the getMissionControlSpaces list corresponds to a
 ---space with a given space_id
 ---@param space_id number
----@return number|nil
+---@return number?
 function MissionControl:getSpaceIndex(space_id)
     local layout = Spaces.allSpaces()
     local index = 0
@@ -173,7 +173,7 @@ end
 
 ---get the Mission Control space for the provided index
 ---@param index number index for Mission Control space
----@return Space|nil
+---@return Space?
 function MissionControl:getSpaceID(index)
     local layout = Spaces.allSpaces()
     for _, screen in ipairs(Screen.allScreens()) do
@@ -186,7 +186,7 @@ end
 
 ---move the currently focused window to a space for the space ID
 ---@param space_id number
----@return boolean, string|nil
+---@return boolean, string?
 function MissionControl:moveWindowToSpace(focused_window, space_id)
     if not focused_window then
         return false, "no focused window"
@@ -266,7 +266,7 @@ end
 
 ---attempt to make specified space the active space and keep focus on space
 ---@param space_id number ID for space
----@param window Window|nil a window in the space
+---@param window Window? a window in the space
 function MissionControl:focusSpace(space_id, window)
     local screen = Screen(Spaces.spaceDisplay(space_id))
     if not screen then
