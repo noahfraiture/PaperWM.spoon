@@ -50,6 +50,8 @@ local Fnutils <const> = hs.fnutils
 
 local MissionControl = dofile(hs.spoons.resourcePath("mission_control.lua"))
 local Swipe = dofile(hs.spoons.resourcePath("swipe.lua"))
+local Space = dofile(hs.spoons.resourcePath("space.lua"))
+local Window = dofile(hs.spoons.resourcePath("window.lua"))
 
 local PaperWM = {}
 PaperWM.__index = PaperWM
@@ -61,6 +63,8 @@ PaperWM.author = "Michael Mogenson"
 PaperWM.homepage = "https://github.com/mogenson/PaperWM.spoon"
 PaperWM.license = "MIT - https://opensource.org/licenses/MIT"
 
+PaperWM.running = false
+
 -- Types
 
 ---@alias PaperWM table PaperWM module object
@@ -69,77 +73,6 @@ PaperWM.license = "MIT - https://opensource.org/licenses/MIT"
 ---@alias Index { row: number, col: number, space: number }
 ---@alias Space number a Mission Control space ID
 ---@alias Screen userdata hs.screen
-
----@alias Mapping { [string]: (table | string)[]}
-PaperWM.default_hotkeys = {
-    stop_events          = { { "alt", "cmd", "shift" }, "q" },
-    refresh_windows      = { { "alt", "cmd", "shift" }, "r" },
-    toggle_floating      = { { "alt", "cmd", "shift" }, "escape" },
-    focus_left           = { { "alt", "cmd" }, "left" },
-    focus_right          = { { "alt", "cmd" }, "right" },
-    focus_up             = { { "alt", "cmd" }, "up" },
-    focus_down           = { { "alt", "cmd" }, "down" },
-    swap_left            = { { "alt", "cmd", "shift" }, "left" },
-    swap_right           = { { "alt", "cmd", "shift" }, "right" },
-    swap_up              = { { "alt", "cmd", "shift" }, "up" },
-    swap_down            = { { "alt", "cmd", "shift" }, "down" },
-    center_window        = { { "alt", "cmd" }, "c" },
-    full_width           = { { "alt", "cmd" }, "f" },
-    cycle_width          = { { "alt", "cmd" }, "r" },
-    cycle_height         = { { "alt", "cmd", "shift" }, "r" },
-    reverse_cycle_width  = { { "ctrl", "alt", "cmd" }, "r" },
-    reverse_cycle_height = { { "ctrl", "alt", "cmd", "shift" }, "r" },
-    slurp_in             = { { "alt", "cmd" }, "i" },
-    barf_out             = { { "alt", "cmd" }, "o" },
-    switch_space_l       = { { "alt", "cmd" }, "," },
-    switch_space_r       = { { "alt", "cmd" }, "." },
-    switch_space_1       = { { "alt", "cmd" }, "1" },
-    switch_space_2       = { { "alt", "cmd" }, "2" },
-    switch_space_3       = { { "alt", "cmd" }, "3" },
-    switch_space_4       = { { "alt", "cmd" }, "4" },
-    switch_space_5       = { { "alt", "cmd" }, "5" },
-    switch_space_6       = { { "alt", "cmd" }, "6" },
-    switch_space_7       = { { "alt", "cmd" }, "7" },
-    switch_space_8       = { { "alt", "cmd" }, "8" },
-    switch_space_9       = { { "alt", "cmd" }, "9" },
-    move_window_1        = { { "alt", "cmd", "shift" }, "1" },
-    move_window_2        = { { "alt", "cmd", "shift" }, "2" },
-    move_window_3        = { { "alt", "cmd", "shift" }, "3" },
-    move_window_4        = { { "alt", "cmd", "shift" }, "4" },
-    move_window_5        = { { "alt", "cmd", "shift" }, "5" },
-    move_window_6        = { { "alt", "cmd", "shift" }, "6" },
-    move_window_7        = { { "alt", "cmd", "shift" }, "7" },
-    move_window_8        = { { "alt", "cmd", "shift" }, "8" },
-    move_window_9        = { { "alt", "cmd", "shift" }, "9" }
-}
-
--- filter for windows to manage
-PaperWM.window_filter = WindowFilter.new():setOverrideFilter({
-    visible = true,
-    fullscreen = false,
-    hasTitlebar = true,
-    allowRoles = "AXStandardWindow"
-})
-
--- window gaps: can be set as a single number or a table with top, bottom, left, right values
-PaperWM.window_gap = {
-    top = 8,
-    bottom = 8,
-    left = 8,
-    right = 8,
-}
-
--- ratios to use when cycling widths and heights, golden ratio by default
-PaperWM.window_ratios = { 0.33, 0.5, 0.66 }
-
--- size of the on-screen margin to place off-screen windows
-PaperWM.screen_margin = 1
-
--- number of fingers to detect a horizontal swipe, set to 0 to disable
-PaperWM.swipe_fingers = 0
-
--- increase this number to make windows move futher when swiping
-PaperWM.swipe_gain = 1
 
 -- logger
 PaperWM.logger = hs.logger.new(PaperWM.name)
@@ -163,57 +96,19 @@ local Direction <const> = {
 -- hs.settings key for persisting is_floating, stored as an array of window id
 local IsFloatingKey <const> = 'PaperWM_is_floating'
 
+local spaces = {}
+
 -- array of windows sorted from left to right
 local window_list = {} -- 3D array of tiles in order of [space][x][y]
 local index_table = {} -- dictionary of {space, x, y} with window id for keys
 local ui_watchers = {} -- dictionary of uielement watchers with window id for keys
 local is_floating = {} -- dictionary of boolean with window id for keys
-local x_positions = {} -- dictionary of horizontal positions with [space][window] for keys
 
 -- refresh window layout on screen change
 local screen_watcher = Screen.watcher.new(function() PaperWM:refreshWindows() end)
 
----return the first window that's completely on the screen
----@param space Space space to lookup windows
----@param screen_frame Frame the coordinates of the screen
----@pram direction Direction|nil either LEFT or RIGHT
----@return Window|nil
-local function getFirstVisibleWindow(space, screen_frame, direction)
-    direction = direction or Direction.LEFT
-    local distance = math.huge
-    local closest = nil
 
-    for _, windows in ipairs(window_list[space] or {}) do
-        local window = windows[1] -- take first window in column
-        local d = (function()
-            if direction == Direction.LEFT then
-                return window:frame().x - screen_frame.x
-            elseif direction == Direction.RIGHT then
-                return screen_frame.x2 - window:frame().x2
-            end
-        end)() or math.huge
-        if d >= 0 and d < distance then
-            distance = d
-            closest = window
-        end
-    end
-    return closest
-end
 
----get a column of windows for a space from the window_list
----@param space Space
----@param col number
----@return Window[]
-local function getColumn(space, col) return (window_list[space] or {})[col] end
-
----get a window in a row, in a column, in a space from the window_list
----@param space Space
----@param col number
----@param row number
----@return Window
-local function getWindow(space, col, row)
-    return (getColumn(space, col) or {})[row]
-end
 
 ---get the gap value for the specified side
 ---@param side string "top", "bottom", "left", or "right"
@@ -245,31 +140,6 @@ local function getCanvas(screen)
         screen_frame.w - (left_gap + right_gap),
         screen_frame.h - (top_gap + bottom_gap)
     )
-end
-
----update the column number in window_list to be ascending from provided column up
----@param space Space
----@param column number
-local function updateIndexTable(space, column)
-    local columns = window_list[space] or {}
-    for col = column, #columns do
-        for row, window in ipairs(getColumn(space, col)) do
-            index_table[window:id()] = { space = space, col = col, row = row }
-        end
-    end
-end
-
----update the virtual x position for a table of windows on the specified space
----@param space Space
----@param windows Window[]
-local function updateVirtualPositions(space, windows, x)
-    if PaperWM.swipe_fingers == 0 then return end
-    if not x_positions[space] then
-        x_positions[space] = {}
-    end
-    for _, window in ipairs(windows) do
-        x_positions[space][window] = x
-    end
 end
 
 ---save the is_floating list to settings
@@ -385,12 +255,8 @@ local function swipeHandler(self)
             space        = focused_index.space
 
             -- stop all window moved watchers
-            for window, _ in pairs(x_positions[space] or {}) do
-                if not window then break end
-                local watcher = ui_watchers[window:id()]
-                if watcher then
-                    watcher:stop()
-                end
+            for window in space:getWindows() do
+                window.ui_watcher:stop()
             end
         elseif type == Swipe.END then
             self.logger.df("swipe end: %d", id)
@@ -400,12 +266,8 @@ local function swipeHandler(self)
             end
 
             -- restart all window moved watchers
-            for window, _ in pairs(x_positions[space] or {}) do
-                if not window then break end
-                local watcher = ui_watchers[window:id()]
-                if watcher then
-                    watcher:start({ Watcher.windowMoved, Watcher.windowResized })
-                end
+            for window in space:getWindows() do
+                window.ui_watcher:start({ Watcher.windowMoved, Watcher.windowResized })
             end
 
             -- ensure a focused window is on screen
@@ -447,9 +309,8 @@ local function swipeHandler(self)
             local left_margin  = screen_frame.x + self.screen_margin
             local right_margin = screen_frame.x2 - self.screen_margin
 
-            for window, x in pairs(x_positions[space] or {}) do
-                if not window then break end
-                x = x + dx
+            for window in space:getWindows() do
+                x = window.x + dx
                 local frame = window:frame()
                 if dx > 0 then -- scroll right
                     frame.x = math.min(x, right_margin)
@@ -457,9 +318,17 @@ local function swipeHandler(self)
                     frame.x = math.max(x, left_margin - frame.w)
                 end
                 window:setTopLeft(frame.x, frame.y) -- avoid the animationDuration
-                x_positions[space][window] = x      -- update virtual position
+                window.x = x                        -- update virtual position
             end
         end
+    end
+end
+
+function PaperWM:toggle()
+    if self.running then
+        self:stop()
+    else
+        self:start()
     end
 end
 
@@ -477,7 +346,6 @@ function PaperWM:start()
     index_table = {}
     ui_watchers = {}
     is_floating = {}
-    x_positions = {}
 
     -- restore saved is_floating state, filtering for valid windows
     local persisted = hs.settings.get(IsFloatingKey) or {}
@@ -507,6 +375,7 @@ function PaperWM:start()
         Swipe:start(self.swipe_fingers, swipeHandler(self))
     end
 
+    self.running = true;
     return self
 end
 
@@ -525,6 +394,8 @@ function PaperWM:stop()
 
     -- stop listening for touchpad swipes
     Swipe:stop()
+
+    self.running = false
 
     return self
 end
@@ -796,6 +667,9 @@ function PaperWM:removeWindow(remove_window, skip_new_window_focus)
             Direction.DOWN, Direction.UP, Direction.LEFT, Direction.RIGHT
         }) do if self:focusWindow(direction, remove_index) then break end end
     end
+
+    remove_window.space[col][row]  
+    -- TODO : clean window
 
     -- remove window
     table.remove(window_list[remove_index.space][remove_index.col],
