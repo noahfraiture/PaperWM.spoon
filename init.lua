@@ -73,6 +73,8 @@ PaperWM.running = false
 ---@alias Frame table hs.geometry.rect
 ---@alias Index { row: number, col: number, space: number }
 ---@alias Window table hs.window
+---@alias Space number
+---@alias Watcher table hs.application.watcher
 
 -- logger
 PaperWM.logger = hs.logger.new(PaperWM.name)
@@ -119,7 +121,7 @@ end
 local screen_watcher = Screen.watcher.new(function() PaperWM:refreshWindows() end)
 
 ---save the is_floating list to settings
-local function persistFloatingList()
+function PaperWM:persistFloatingList()
     local persisted = {}
     for _, space in ipairs(spaces) do
         space:filter(function(window) return window.is_floating_index ~= nil end, persisted)
@@ -127,7 +129,7 @@ local function persistFloatingList()
     hs.settings.set(IsFloatingKey, persisted)
 end
 
-local function restoreFloatingList()
+function PaperWM:restoreFloatingList()
     local persisted = hs.settings.get(IsFloatingKey) or {}
     for _, id in ipairs(persisted) do
         local window = Window.get(id)
@@ -136,7 +138,7 @@ local function restoreFloatingList()
             is_floating[id] = true
         end
     end
-    persistFloatingList()
+    self:persistFloatingList()
 end
 
 local prev_focused_window = nil ---@type CustomWindow?
@@ -162,7 +164,7 @@ function PaperWM:windowEventHandler(window, event)
         -- this event is only meaningful for floating windows
         if event == "windowDestroyed" then
             table.remove(window.space.floating, window.is_floating_index)
-            persistFloatingList()
+            self:persistFloatingList()
         end
         -- no other events are meaningful for floating windows
         return
@@ -243,7 +245,7 @@ local function swipeHandler(self)
 
             -- stop all window moved watchers
             for window in space:getWindows() do
-                window.ui_watcher:stop()
+                window.watcher:stop()
             end
         elseif type == Swipe.END then
             self.logger.df("swipe end: %d", id)
@@ -254,7 +256,7 @@ local function swipeHandler(self)
 
             -- restart all window moved watchers
             for window in space:getWindows() do
-                window.ui_watcher:start({ Watcher.windowMoved, Watcher.windowResized })
+                window.watcher:start({ Watcher.windowMoved, Watcher.windowResized })
             end
 
             -- ensure a focused window is on screen
@@ -361,7 +363,7 @@ function PaperWM:stop()
     self.window_filter:unsubscribeAll()
     for _, space in ipairs(spaces) do
         for window in space:getWindows() do
-            window.ui_watcher:stop()
+            window.watcher:stop()
     end end
     screen_watcher:stop()
 
@@ -622,18 +624,15 @@ function PaperWM:addWindow(add_window)
     -- TODO : test
     table.insert(space.windows[add_column], add_window)
 
-    -- update index table
-    updateIndexTable(native_space, add_column)
-
     -- subscribe to window moved events
-    local watcher = add_window:newWatcher(
-        function(window, event, _, self)
-            windowEventHandler(window, event, self)
+    local watcher = add_window.window:newWatcher(
+        function(window, event, _, _)
+            self:windowEventHandler(window, event)
         end, self)
     watcher:start({ Watcher.windowMoved, Watcher.windowResized })
-    ui_watchers[add_window:id()] = watcher
+    add_window.watcher = watcher
 
-    return native_space
+    return space
 end
 
 ---remove a window from being tracked and automatically tiled
@@ -663,21 +662,27 @@ end
 
 ---move focus to a new window next to the currently focused window
 ---@param direction Direction use either Direction UP, DOWN, LEFT, or RIGHT
----@param focused_index Index index of focused window within the window_list
+---@param window CustomWindow
 -- TODO : move in space ? but can we have a focus without being on the space ?
 function PaperWM:focusWindow(direction, window)
-    local space = nil
     if not window then
         -- get current focused window
         local id = Window.focusedWindow():id()
-        space = CustomSpace:visitSpaces(function(space)
-            return space:findWindowById(id) ~= nil
-        end)
-        if space == nil then
+        local space
+        for _, s in ipairs(spaces) do
+            space = s
+            if s:findWindowById(id) then break end
+        end
+        if not space then
             self.logger.d("focused window not found")
             return
         end
         window = space:findWindowById(id)
+    end
+    local space = window.space
+    if not space then
+        self.logger.d("space not found")
+        return
     end
 
     -- get new focused window
@@ -1361,7 +1366,7 @@ function PaperWM:toggleFloating()
     else
         is_floating[id] = true
     end
-    persistFloatingList()
+    self:persistFloatingList()
 
     local space = (function()
         if is_floating[id] then

@@ -1,6 +1,6 @@
 ---@class CustomWindow
 ---@field x number
----@field ui_watcher
+---@field watcher Watcher
 ---@field space CustomSpace?
 ---@field col number -- nil if is_floating_index
 ---@field row number -- nil if is_floating_index
